@@ -1,126 +1,118 @@
-import React from 'react';
-import { useForm, useFieldArray, Controller } from 'react-hook-form';
-import './App.css';
+import React, { useEffect } from "react";
+import { useForm, useFieldArray } from "react-hook-form";
+import debounce from "lodash.debounce";
 
-const App = () => {
-  const { control, handleSubmit, watch, register, setValue } = useForm({
+let defaultValue = {
+  presentationDefinition: "",
+  presentationDropdown: "",
+  selectedVerificationFormat: "",
+  label: "",
+  fields: [],
+};
+
+const JsonForm = () => {
+  const {
+    register,
+    control,
+    handleSubmit,
+    setValue,
+    onSubmit,
+    watch,
+    resetField,
+  } = useForm({
+    mode: "onChange",
     defaultValues: {
-      constraints: {
-        fields: [
-          {
-            path: '$.type',
-            filter: {
-              type: '',
-            },
-          },
-        ],
-      },
+      ...defaultValue,
     },
   });
 
   const { fields, append, remove } = useFieldArray({
     control,
-    name: 'constraints.fields',
+    name: "fields",
   });
 
-  const onSubmit = (data) => {
-    // Filter out empty fields before submitting
-    const filteredData = data.constraints.fields.map((field) => {
-      const filterType = field.filter.type;
-      const filteredField = { ...field };
+  const presentationDefinitionValue = watch("presentationDefinition");
 
-      if (filterType === 'array') {
-        filteredField.filter = { type: 'array', contains: field.filter.contains };
-      } else if (filterType === 'string') {
-        filteredField.filter = { type: 'string', pattern: field.filter.pattern };
-      } else if (filterType === 'number') {
-        filteredField.filter = {
-          type: 'number',
-          minimum: field.filter.minimum,
-          maximum: field.filter.maximum,
-        };
-      } else {
-        filteredField.filter = { type: '' };
+  useEffect(() => {
+    // if (
+    //   presentationDefinitionValue === "" ||
+    //   presentationDefinitionValue === undefined
+    // ) {
+    //   setCredentialIsValid(false);
+    // } else setCredentialIsValid(true);
+
+    if (presentationDefinitionValue) {
+      resetField("fields");
+
+      try {
+        const parsedJson = JSON.parse(presentationDefinitionValue);
+        if (
+          parsedJson &&
+          parsedJson.constraints &&
+          parsedJson.constraints.fields
+        ) {
+          const newFields = parsedJson.constraints.fields.map((field) => ({
+            path: field.path[0],
+          }));
+          setValue("fields", newFields);
+        }
+      } catch (error) {
+        console.error("Invalid JSON");
       }
+    }
+  }, [presentationDefinitionValue]);
 
-      return filteredField;
-    });
-
-    console.log(filteredData);
+  const handlePresentationDefinitionChange = (e) => {
+    setValue("presentationDefinition", e.target.value);
   };
 
+  const handlePathChangeDebounced = debounce((index, value) => {
+    const updatedFields = fields.map((field, i) =>
+      i === index ? { ...field, path: value } : field
+    );
+    updateJsonValue(updatedFields);
+  }, 100);
+
+  const updateJsonValue = (updatedFields) => {
+    const updatedJson = JSON.parse(
+      JSON.stringify(JSON.parse(presentationDefinitionValue))
+    );
+    updatedFields.forEach((field, index) => {
+      updatedJson.constraints.fields[index].path[0] = field.path;
+    });
+
+    setValue("presentationDefinition", JSON.stringify(updatedJson, null, 2));
+  };
+
+  const handleInputChangeForDataAttribute = (index, e) => {
+    const value = e.target.value;
+    handlePathChangeDebounced(index, value);
+  };
+
+  const handleRemoveAttribute = (index) => {
+    remove(index);
+    const updatedJson = JSON.parse(presentationDefinitionValue);
+    updatedJson.constraints.fields.splice(index, 1);
+    setValue("presentationDefinition", JSON.stringify(updatedJson, null, 2));
+  };
   return (
     <div>
+      <textarea
+        onChange={handlePresentationDefinitionChange}
+        value={watch("presentationDefinition")}
+      />
       <form onSubmit={handleSubmit(onSubmit)}>
-        <h2>Dynamic Form</h2>
-        {fields.map((item, index) => (
-          <div key={item.id} className="field-group">
-            <div>
-              <label>Path:</label>
-              <input
-                {...register(`constraints.fields.${index}.path`)}
-                defaultValue={item.path}
-              />
-            </div>
+        {fields.map((field, index) => (
+          <div key={field.id}>
+            <input
+              {...register(`fields.${index}.path`, {
+                required: true,
+              })}
+              value={field.path}
+              onChange={(e) => handleInputChangeForDataAttribute(index, e)}
+            />
 
-            <div>
-              <label>Filter Type:</label>
-              <Controller
-                control={control}
-                name={`constraints.fields.${index}.filter.type`}
-                render={({ field }) => (
-                  <select {...field}>
-                    <option value="">Select Type</option>
-                    <option value="array">Array</option>
-                    <option value="string">String</option>
-                    <option value="number">Number</option>
-                  </select>
-                )}
-              />
-            </div>
-
-            {watch(`constraints.fields.${index}.filter.type`) === 'array' && (
-              <div>
-                <label>Contains (const):</label>
-                <input
-                  {...register(`constraints.fields.${index}.filter.contains.const`)}
-                  placeholder="Contains"
-                />
-              </div>
-            )}
-
-            {watch(`constraints.fields.${index}.filter.type`) === 'string' && (
-              <div>
-                <label>Pattern:</label>
-                <input
-                  {...register(`constraints.fields.${index}.filter.pattern`)}
-                  placeholder="Pattern"
-                />
-              </div>
-            )}
-
-            {watch(`constraints.fields.${index}.filter.type`) === 'number' && (
-              <>
-                <div>
-                  <label>Minimum:</label>
-                  <input
-                    type="number"
-                    {...register(`constraints.fields.${index}.filter.minimum`)}
-                    placeholder="Minimum"
-                  />
-                </div>
-                <div>
-                  <label>Maximum:</label>
-                  <input
-                    type="number"
-                    {...register(`constraints.fields.${index}.filter.maximum`)}
-                    placeholder="Maximum"
-                  />
-                </div>
-              </>
-            )}
-
-            <button type="button" onClick={() => remove(index)}>
+            <button type="button" onClick={() => handleRemoveAttribute(index)}>
               Remove
             </button>
           </div>
@@ -128,22 +120,36 @@ const App = () => {
 
         <button
           type="button"
-          className="add-field"
-          onClick={() =>
-            append({
-              path: '$.type',
-              filter: {
-                type: '',
-              },
-            })
-          }
+          onClick={() => {
+            if (
+              !presentationDefinitionValue ||
+              presentationDefinitionValue === ""
+            ) {
+              const defaultPresentationDefinition = {
+                constraints: { fields: [{ path: [""] }] },
+              };
+              setValue(
+                "presentationDefinition",
+                JSON.stringify(defaultPresentationDefinition, null, 2)
+              );
+            } else {
+              append({ path: [""] });
+              const updatedJson = JSON.parse(presentationDefinitionValue);
+              updatedJson.constraints.fields.push({ path: [""] });
+              setValue(
+                "presentationDefinition",
+                JSON.stringify(updatedJson, null, 2)
+              );
+            }
+          }}
         >
           Add Field
         </button>
-        <button type="submit">Submit</button>
+
+        <input type="submit" />
       </form>
     </div>
   );
 };
 
-export default App;
+export default JsonForm;
