@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import debounce from "lodash.debounce";
 
@@ -16,7 +16,6 @@ const JsonForm = () => {
     control,
     handleSubmit,
     setValue,
-    onSubmit,
     watch,
     resetField,
   } = useForm({
@@ -32,17 +31,12 @@ const JsonForm = () => {
   });
 
   const presentationDefinitionValue = watch("presentationDefinition");
+  const [hiddenFields, setHiddenFields] = useState([]);
 
   useEffect(() => {
-    // if (
-    //   presentationDefinitionValue === "" ||
-    //   presentationDefinitionValue === undefined
-    // ) {
-    //   setCredentialIsValid(false);
-    // } else setCredentialIsValid(true);
-
     if (presentationDefinitionValue) {
       resetField("fields");
+      setHiddenFields([]);  // Reset hidden fields
 
       try {
         const parsedJson = JSON.parse(presentationDefinitionValue);
@@ -95,13 +89,32 @@ const JsonForm = () => {
     updatedJson.constraints.fields.splice(index, 1);
     setValue("presentationDefinition", JSON.stringify(updatedJson, null, 2));
   };
+
+  const toggleFieldVisibility = (index) => {
+    setHiddenFields((prevHiddenFields) =>
+      prevHiddenFields.includes(index)
+        ? prevHiddenFields.filter((i) => i !== index)
+        : [...prevHiddenFields, index]
+    );
+  };
+
+  const filteredPresentationDefinition = () => {
+    if (!presentationDefinitionValue) return "";
+    const parsedJson = JSON.parse(presentationDefinitionValue);
+    const visibleFields = parsedJson.constraints.fields.filter(
+      (_, index) => !hiddenFields.includes(index)
+    );
+    const visibleJson = { ...parsedJson, constraints: { fields: visibleFields } };
+    return JSON.stringify(visibleJson, null, 2);
+  };
+
   return (
     <div>
       <textarea
         onChange={handlePresentationDefinitionChange}
-        value={watch("presentationDefinition")}
+        value={filteredPresentationDefinition()}
       />
-      <form onSubmit={handleSubmit(onSubmit)}>
+      <form onSubmit={handleSubmit()}>
         {fields.map((field, index) => (
           <div key={field.id}>
             <input
@@ -110,7 +123,13 @@ const JsonForm = () => {
               })}
               value={field.path}
               onChange={(e) => handleInputChangeForDataAttribute(index, e)}
+              style={{width:"500px"}}
             />
+            <input
+              type="checkbox"
+              checked={!hiddenFields.includes(index)}
+              onChange={() => toggleFieldVisibility(index)}
+            /> Show
 
             <button type="button" onClick={() => handleRemoveAttribute(index)}>
               Remove
