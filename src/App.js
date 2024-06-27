@@ -26,11 +26,13 @@ const JsonForm = () => {
 
   const presentationDefinitionValue = watch("presentationDefinition");
   const [hiddenFields, setHiddenFields] = useState([]);
+  const [localFieldValues, setLocalFieldValues] = useState({});
 
   useEffect(() => {
     if (presentationDefinitionValue) {
       resetField("fields");
       setHiddenFields([]);
+      setLocalFieldValues({});
 
       try {
         const parsedJson = JSON.parse(presentationDefinitionValue);
@@ -43,6 +45,11 @@ const JsonForm = () => {
             path: field.path[0],
           }));
           setValue("fields", newFields);
+          const newLocalValues = newFields.reduce((acc, field, index) => {
+            acc[index] = getDisplayValue(field.path);
+            return acc;
+          }, {});
+          setLocalFieldValues(newLocalValues);
         }
       } catch (error) {
         console.error("Invalid JSON");
@@ -56,26 +63,46 @@ const JsonForm = () => {
 
   const updateJsonValue = useCallback(
     debounce((updatedFields) => {
-      const updatedJson = JSON.parse(presentationDefinitionValue);
-      updatedFields.forEach((field, index) => {
-        updatedJson.constraints.fields[index].path[0] = field.path;
-      });
-      setValue("presentationDefinition", JSON.stringify(updatedJson, null, 2));
+      try {
+        const updatedJson = JSON.parse(presentationDefinitionValue);
+        updatedFields.forEach((field, index) => {
+          updatedJson.constraints.fields[index].path[0] = field.path;
+        });
+        setValue("presentationDefinition", JSON.stringify(updatedJson, null, 2));
+      } catch (error) {
+        console.error("Error updating JSON:", error);
+      }
     }, 300),
     [presentationDefinitionValue, setValue]
   );
 
   const handleInputChangeForDataAttribute = (index, e) => {
-    const value = e.target.value;
-    setValue(`fields.${index}.path`, value);
+    const newValue = e.target.value;
+    setLocalFieldValues(prev => ({ ...prev, [index]: newValue }));
+    
+    const currentPath = fields[index].path;
+    let updatedValue = newValue;
+    
+    if (currentPath.startsWith("$.credentialSubject.")) {
+      updatedValue = "$.credentialSubject." + newValue;
+    }
+    
+    setValue(`fields.${index}.path`, updatedValue);
+    
     const updatedFields = fields.map((field, i) =>
-      i === index ? { ...field, path: value } : field
+      i === index ? { ...field, path: updatedValue } : field
     );
+    
     updateJsonValue(updatedFields);
   };
 
   const handleRemoveAttribute = (index) => {
     remove(index);
+    setLocalFieldValues(prev => {
+      const newValues = { ...prev };
+      delete newValues[index];
+      return newValues;
+    });
     const updatedJson = JSON.parse(presentationDefinitionValue);
     updatedJson.constraints.fields.splice(index, 1);
     setValue("presentationDefinition", JSON.stringify(updatedJson, null, 2));
@@ -102,26 +129,32 @@ const JsonForm = () => {
     return JSON.stringify(visibleJson, null, 2);
   };
 
+  const getDisplayValue = (value) => {
+    return value.startsWith("$.credentialSubject.")
+      ? value.slice("$.credentialSubject.".length)
+      : value;
+  };
+
   return (
     <div>
-      {fields.length > 0 && (
-        <div>
+      {fields.map((field, index) => (
+        <div key={field.id}>
           <input
-            {...register(`fields.0.path`)}
-            onChange={(e) => handleInputChangeForDataAttribute(0, e)}
+            value={localFieldValues[index] || ""}
+            onChange={(e) => handleInputChangeForDataAttribute(index, e)}
             style={{ width: "500px" }}
           />
           <input
             type="checkbox"
-            checked={!hiddenFields.includes(0)}
-            onChange={() => toggleFieldVisibility(0)}
+            checked={!hiddenFields.includes(index)}
+            onChange={() => toggleFieldVisibility(index)}
           />{" "}
           Show
-          <button type="button" onClick={() => handleRemoveAttribute(0)}>
+          <button type="button" onClick={() => handleRemoveAttribute(index)}>
             Remove
           </button>
         </div>
-      )}
+      ))}
 
       <textarea
         onChange={handlePresentationDefinitionChange}
@@ -130,25 +163,6 @@ const JsonForm = () => {
       />
 
       <form onSubmit={handleSubmit()}>
-        {fields.slice(1).map((field, index) => (
-          <div key={field.id}>
-            <input
-              {...register(`fields.${index + 1}.path`)}
-              onChange={(e) => handleInputChangeForDataAttribute(index + 1, e)}
-              style={{ width: "500px" }}
-            />
-            <input
-              type="checkbox"
-              checked={!hiddenFields.includes(index + 1)}
-              onChange={() => toggleFieldVisibility(index + 1)}
-            />{" "}
-            Show
-            <button type="button" onClick={() => handleRemoveAttribute(index + 1)}>
-              Remove
-            </button>
-          </div>
-        ))}
-
         <button
           type="button"
           onClick={() => {
