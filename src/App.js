@@ -10,6 +10,7 @@ const JsonForm = () => {
       fields: [],
       limitDisclosure: false,
       typeCheck: "",
+      typeFilter: null,
       presentationDefinition: JSON.stringify(
         {
           constraints: {
@@ -31,6 +32,7 @@ const JsonForm = () => {
   const watchLimitDisclosure = watch("limitDisclosure");
   const watchPresentationDefinition = watch("presentationDefinition");
   const watchTypeCheck = watch("typeCheck");
+  const watchTypeFilter = watch("typeFilter");
 
   const stripCredentialSubject = (value) => {
     return value.startsWith("$.credentialSubject.")
@@ -42,7 +44,7 @@ const JsonForm = () => {
     const updatedJson = {
       constraints: {
         fields: watchFields
-          .filter((field) => !field.isHidden)
+          .filter((field) => !field.isHidden && field.path !== "$.type")
           .map((field) => {
             const fieldData = {
               path: [
@@ -63,12 +65,22 @@ const JsonForm = () => {
       updatedJson.constraints.limit_disclosure = "required";
     }
 
+    // Add type field if typeCheck is set
     if (watchTypeCheck) {
-      updatedJson.constraints.fields.push({ path: [watchTypeCheck] });
+      updatedJson.constraints.fields.push({
+        path: [watchTypeCheck],
+        ...(watchTypeFilter && { filter: watchTypeFilter }),
+      });
     }
 
     setValue("presentationDefinition", JSON.stringify(updatedJson, null, 2));
-  }, [watchFields, watchLimitDisclosure, watchTypeCheck, setValue]);
+  }, [
+    watchFields,
+    watchLimitDisclosure,
+    watchTypeCheck,
+    watchTypeFilter,
+    setValue,
+  ]);
 
   useEffect(() => {
     updateJsonFromFields();
@@ -89,53 +101,42 @@ const JsonForm = () => {
     );
 
     if (!hasTypeField) {
-      throw new Error("Presentation Definition must contain a field with path '$.type'");
+      throw new Error(
+        "Presentation Definition must contain a field with path '$.type'"
+      );
     }
   };
 
   const handleModalClose = () => {
     try {
       const parsedJson = JSON.parse(watchPresentationDefinition);
-      validatePresentationDefinition(parsedJson);
 
-      const updatedFields = parsedJson.constraints.fields.map((field) => {
-        const path = field.path[0];
-        const hasPrefix = path.startsWith("$.credentialSubject.");
-        return {
-          path: stripCredentialSubject(path),
-          hasPrefix,
-          isHidden: false,
-          filter: field.filter,
-        };
-      });
+      const updatedFields = parsedJson.constraints.fields
+        .filter((field) => field.path[0] !== "$.type")
+        .map((field) => {
+          const path = field.path[0];
+          const hasPrefix = path.startsWith("$.credentialSubject.");
+          return {
+            path: stripCredentialSubject(path),
+            hasPrefix,
+            isHidden: false,
+            filter: field.filter,
+          };
+        });
 
-      const typeField = updatedFields.find((field) => field.path === "$.type");
+      // Update typeCheck and typeFilter separately
+      const typeField = parsedJson.constraints.fields.find(
+        (field) => field.path[0] === "$.type"
+      );
       if (typeField) {
         setValue("typeCheck", "$.type");
-        updatedFields.splice(updatedFields.indexOf(typeField), 1);
+        setValue("typeFilter", typeField.filter || null);
       } else {
         setValue("typeCheck", "");
+        setValue("typeFilter", null);
       }
 
-      const mergedFields = watchFields
-        .map((existingField) => {
-          const updatedField = updatedFields.find(
-            (f) => f.path === stripCredentialSubject(existingField.path)
-          );
-          if (updatedField) {
-            return { ...existingField, ...updatedField };
-          }
-          return existingField.isHidden ? existingField : null;
-        })
-        .filter(Boolean);
-
-      updatedFields.forEach((newField) => {
-        if (!mergedFields.some((f) => f.path === newField.path)) {
-          mergedFields.push(newField);
-        }
-      });
-
-      setValue("fields", mergedFields);
+      setValue("fields", updatedFields);
 
       const hasLimitDisclosure =
         parsedJson.constraints &&
@@ -143,11 +144,12 @@ const JsonForm = () => {
       setValue("limitDisclosure", hasLimitDisclosure);
 
       setError(null);
+      validatePresentationDefinition(parsedJson);
+
       setIsModalOpen(false);
     } catch (error) {
       setError(error.message);
       setIsModalOpen(false);
-
     }
   };
 
