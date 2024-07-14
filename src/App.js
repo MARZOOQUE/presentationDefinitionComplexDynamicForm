@@ -1,198 +1,323 @@
-import React, { useEffect, useState, useCallback } from "react";
-import { useForm, useFieldArray } from "react-hook-form";
-import debounce from "lodash.debounce";
-
-let defaultValue = {
-  presentationDefinition: "",
-  presentationDropdown: "",
-  selectedVerificationFormat: "",
-  label: "",
-  fields: [],
-};
+import React, { useState, useEffect, useCallback } from "react";
+import { useForm, useFieldArray, Controller } from "react-hook-form";
 
 const JsonForm = () => {
-  const { register, control, handleSubmit, setValue, watch, resetField } =
-    useForm({
-      mode: "onChange",
-      defaultValues: {
-        ...defaultValue,
-      },
-    });
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [error, setError] = useState(null);
+
+  const { control, handleSubmit, setValue, watch } = useForm({
+    defaultValues: {
+      fields: [],
+      limitDisclosure: false,
+      typeCheck: "",
+      presentationDefinition: JSON.stringify(
+        {
+          constraints: {
+            fields: [],
+          },
+        },
+        null,
+        2
+      ),
+    },
+  });
 
   const { fields, append, remove } = useFieldArray({
     control,
     name: "fields",
   });
 
-  const presentationDefinitionValue = watch("presentationDefinition");
-  const [hiddenFields, setHiddenFields] = useState([]);
-  const [localFieldValues, setLocalFieldValues] = useState({});
+  const watchFields = watch("fields");
+  const watchLimitDisclosure = watch("limitDisclosure");
+  const watchPresentationDefinition = watch("presentationDefinition");
+  const watchTypeCheck = watch("typeCheck");
 
-  useEffect(() => {
-    if (presentationDefinitionValue) {
-      resetField("fields");
-      setHiddenFields([]);
-      setLocalFieldValues({});
-
-      try {
-        const parsedJson = JSON.parse(presentationDefinitionValue);
-        if (
-          parsedJson &&
-          parsedJson.constraints &&
-          parsedJson.constraints.fields
-        ) {
-          const newFields = parsedJson.constraints.fields.map((field) => ({
-            path: field.path[0],
-          }));
-          setValue("fields", newFields);
-          const newLocalValues = newFields.reduce((acc, field, index) => {
-            acc[index] = getDisplayValue(field.path);
-            return acc;
-          }, {});
-          setLocalFieldValues(newLocalValues);
-        }
-      } catch (error) {
-        console.error("Invalid JSON");
-      }
-    }
-  }, [presentationDefinitionValue, resetField, setValue]);
-
-  const handlePresentationDefinitionChange = (e) => {
-    setValue("presentationDefinition", e.target.value);
-  };
-
-  const updateJsonValue = useCallback(
-    debounce((updatedFields) => {
-      try {
-        const updatedJson = JSON.parse(presentationDefinitionValue);
-        updatedFields.forEach((field, index) => {
-          updatedJson.constraints.fields[index].path[0] = field.path;
-        });
-        setValue("presentationDefinition", JSON.stringify(updatedJson, null, 2));
-      } catch (error) {
-        console.error("Error updating JSON:", error);
-      }
-    }, 300),
-    [presentationDefinitionValue, setValue]
-  );
-
-  const handleInputChangeForDataAttribute = (index, e) => {
-    const newValue = e.target.value;
-    setLocalFieldValues(prev => ({ ...prev, [index]: newValue }));
-    
-    const currentPath = fields[index].path;
-    let updatedValue = newValue;
-    
-    if (currentPath.startsWith("$.credentialSubject.")) {
-      updatedValue = "$.credentialSubject." + newValue;
-    }
-    
-    setValue(`fields.${index}.path`, updatedValue);
-    
-    const updatedFields = fields.map((field, i) =>
-      i === index ? { ...field, path: updatedValue } : field
-    );
-    
-    updateJsonValue(updatedFields);
-  };
-
-  const handleRemoveAttribute = (index) => {
-    remove(index);
-    setLocalFieldValues(prev => {
-      const newValues = { ...prev };
-      delete newValues[index];
-      return newValues;
-    });
-    const updatedJson = JSON.parse(presentationDefinitionValue);
-    updatedJson.constraints.fields.splice(index, 1);
-    setValue("presentationDefinition", JSON.stringify(updatedJson, null, 2));
-  };
-
-  const toggleFieldVisibility = (index) => {
-    setHiddenFields((prevHiddenFields) =>
-      prevHiddenFields.includes(index)
-        ? prevHiddenFields.filter((i) => i !== index)
-        : [...prevHiddenFields, index]
-    );
-  };
-
-  const filteredPresentationDefinition = () => {
-    if (!presentationDefinitionValue) return "";
-    const parsedJson = JSON.parse(presentationDefinitionValue);
-    const visibleFields = parsedJson.constraints.fields.filter(
-      (_, index) => !hiddenFields.includes(index)
-    );
-    const visibleJson = {
-      ...parsedJson,
-      constraints: { fields: visibleFields },
-    };
-    return JSON.stringify(visibleJson, null, 2);
-  };
-
-  const getDisplayValue = (value) => {
+  const stripCredentialSubject = (value) => {
     return value.startsWith("$.credentialSubject.")
       ? value.slice("$.credentialSubject.".length)
       : value;
   };
 
+  const updateJsonFromFields = useCallback(() => {
+    const updatedJson = {
+      constraints: {
+        fields: watchFields
+          .filter((field) => !field.isHidden)
+          .map((field) => {
+            const fieldData = {
+              path: [
+                field.hasPrefix
+                  ? `$.credentialSubject.${field.path}`
+                  : field.path,
+              ],
+            };
+            if (field.filter) {
+              fieldData.filter = field.filter;
+            }
+            return fieldData;
+          }),
+      },
+    };
+
+    if (watchLimitDisclosure) {
+      updatedJson.constraints.limit_disclosure = "required";
+    }
+
+    if (watchTypeCheck) {
+      updatedJson.constraints.fields.push({ path: [watchTypeCheck] });
+    }
+
+    setValue("presentationDefinition", JSON.stringify(updatedJson, null, 2));
+  }, [watchFields, watchLimitDisclosure, watchTypeCheck, setValue]);
+
+  useEffect(() => {
+    updateJsonFromFields();
+  }, [updateJsonFromFields]);
+
+  const handlePresentationDefinitionChange = (e) => {
+    setValue("presentationDefinition", e.target.value);
+    setError(null);
+  };
+
+  const validatePresentationDefinition = (parsedJson) => {
+    if (!parsedJson.constraints || !parsedJson.constraints.fields) {
+      throw new Error("Invalid JSON structure: missing constraints.fields");
+    }
+
+    const hasTypeField = parsedJson.constraints.fields.some(
+      (field) => field.path && field.path.includes("$.type")
+    );
+
+    if (!hasTypeField) {
+      throw new Error("Presentation Definition must contain a field with path '$.type'");
+    }
+  };
+
+  const handleModalClose = () => {
+    try {
+      const parsedJson = JSON.parse(watchPresentationDefinition);
+      validatePresentationDefinition(parsedJson);
+
+      const updatedFields = parsedJson.constraints.fields.map((field) => {
+        const path = field.path[0];
+        const hasPrefix = path.startsWith("$.credentialSubject.");
+        return {
+          path: stripCredentialSubject(path),
+          hasPrefix,
+          isHidden: false,
+          filter: field.filter,
+        };
+      });
+
+      const typeField = updatedFields.find((field) => field.path === "$.type");
+      if (typeField) {
+        setValue("typeCheck", "$.type");
+        updatedFields.splice(updatedFields.indexOf(typeField), 1);
+      } else {
+        setValue("typeCheck", "");
+      }
+
+      const mergedFields = watchFields
+        .map((existingField) => {
+          const updatedField = updatedFields.find(
+            (f) => f.path === stripCredentialSubject(existingField.path)
+          );
+          if (updatedField) {
+            return { ...existingField, ...updatedField };
+          }
+          return existingField.isHidden ? existingField : null;
+        })
+        .filter(Boolean);
+
+      updatedFields.forEach((newField) => {
+        if (!mergedFields.some((f) => f.path === newField.path)) {
+          mergedFields.push(newField);
+        }
+      });
+
+      setValue("fields", mergedFields);
+
+      const hasLimitDisclosure =
+        parsedJson.constraints &&
+        parsedJson.constraints.limit_disclosure === "required";
+      setValue("limitDisclosure", hasLimitDisclosure);
+
+      setError(null);
+      setIsModalOpen(false);
+    } catch (error) {
+      setError(error.message);
+      setIsModalOpen(false);
+
+    }
+  };
+
+  const handleAddField = () => {
+    append({ path: "", hasPrefix: false, isHidden: false });
+  };
+
+  const onSubmit = (data) => {
+    updateJsonFromFields();
+    console.log(
+      "Submitted Presentation Definition:",
+      watch("presentationDefinition")
+    );
+  };
+
   return (
-    <div>
-      {fields.map((field, index) => (
-        <div key={field.id}>
-          <input
-            value={localFieldValues[index] || ""}
-            onChange={(e) => handleInputChangeForDataAttribute(index, e)}
-            style={{ width: "500px" }}
+    <div style={{ padding: "16px" }}>
+      <form onSubmit={handleSubmit(onSubmit)}>
+        <div style={{ marginBottom: "16px" }}>
+          <Controller
+            name="limitDisclosure"
+            control={control}
+            render={({ field: { value, onChange } }) => (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={value}
+                  onChange={onChange}
+                  style={{ marginRight: "8px" }}
+                />
+                Limit Disclosure
+              </label>
+            )}
           />
-          <input
-            type="checkbox"
-            checked={!hiddenFields.includes(index)}
-            onChange={() => toggleFieldVisibility(index)}
-          />{" "}
-          Show
-          <button type="button" onClick={() => handleRemoveAttribute(index)}>
-            Remove
-          </button>
         </div>
-      ))}
 
-      <textarea
-        onChange={handlePresentationDefinitionChange}
-        value={filteredPresentationDefinition()}
-        style={{ marginTop: "10px", width: "100%", minHeight: "100px" }}
-      />
+        <div style={{ marginBottom: "16px" }}>
+          <label>
+            Type Check Path:
+            <Controller
+              name="typeCheck"
+              control={control}
+              render={({ field }) => (
+                <input
+                  {...field}
+                  type="text"
+                  style={{ marginLeft: "8px", padding: "4px" }}
+                />
+              )}
+            />
+          </label>
+        </div>
 
-      <form onSubmit={handleSubmit()}>
+        {fields.map((field, index) => (
+          <div
+            key={field.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              marginBottom: "8px",
+            }}
+          >
+            <Controller
+              name={`fields.${index}.isHidden`}
+              control={control}
+              render={({ field: { value, onChange } }) => (
+                <input
+                  type="checkbox"
+                  checked={!value}
+                  onChange={() => onChange(!value)}
+                  style={{ marginRight: "8px" }}
+                />
+              )}
+            />
+            <Controller
+              name={`fields.${index}.path`}
+              control={control}
+              render={({ field: { value, onChange } }) => (
+                <input
+                  type="text"
+                  value={value}
+                  onChange={onChange}
+                  style={{ marginRight: "8px", padding: "4px", flexGrow: 1 }}
+                />
+              )}
+            />
+            <button
+              type="button"
+              onClick={() => remove(index)}
+              style={{ padding: "4px 8px" }}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+
         <button
           type="button"
-          onClick={() => {
-            if (
-              !presentationDefinitionValue ||
-              presentationDefinitionValue === ""
-            ) {
-              const defaultPresentationDefinition = {
-                constraints: { fields: [{ path: [""] }] },
-              };
-              setValue(
-                "presentationDefinition",
-                JSON.stringify(defaultPresentationDefinition, null, 2)
-              );
-            } else {
-              append({ path: "" });
-              const updatedJson = JSON.parse(presentationDefinitionValue);
-              updatedJson.constraints.fields.push({ path: [""] });
-              setValue(
-                "presentationDefinition",
-                JSON.stringify(updatedJson, null, 2)
-              );
-            }
-          }}
+          onClick={handleAddField}
+          style={{ marginBottom: "16px", padding: "8px 16px" }}
         >
           Add Field
         </button>
 
-        <input type="submit" />
+        <button
+          type="button"
+          onClick={() => {
+            updateJsonFromFields();
+            setIsModalOpen(true);
+          }}
+          style={{ padding: "8px 16px", marginRight: "16px" }}
+        >
+          Open Presentation Definition
+        </button>
+
+        <button type="submit" style={{ padding: "8px 16px" }}>
+          Submit
+        </button>
+
+        {error && (
+          <div style={{ color: "red", marginTop: "16px" }}>Error: {error}</div>
+        )}
       </form>
+
+      {isModalOpen && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            backgroundColor: "rgba(0,0,0,0.5)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: "white",
+              padding: "20px",
+              borderRadius: "5px",
+              width: "80%",
+              maxWidth: "600px",
+            }}
+          >
+            <h2>Edit Presentation Definition</h2>
+            <textarea
+              value={watchPresentationDefinition}
+              onChange={handlePresentationDefinitionChange}
+              style={{ width: "100%", height: "200px", marginBottom: "10px" }}
+            />
+            {error && (
+              <div style={{ color: "red", marginBottom: "10px" }}>
+                Error: {error}
+              </div>
+            )}
+            <div>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                style={{ marginRight: "10px" }}
+              >
+                Cancel
+              </button>
+              <button onClick={handleModalClose}>Close and Update</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
