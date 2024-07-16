@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 
 const JsonForm = () => {
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [openEditPresentationDefinitionModal, setOpenEditPresentationDefinitionModal] = useState(false);
   const [error, setError] = useState(null);
 
   const { control, handleSubmit, setValue, watch } = useForm({
@@ -43,29 +43,11 @@ const JsonForm = () => {
   const updateJsonFromFields = useCallback(() => {
     const updatedJson = {
       constraints: {
-        fields: watchFields
-          .filter((field) => !field.isHidden && field.path !== "$.type")
-          .map((field) => {
-            const fieldData = {
-              path: [
-                field.hasPrefix
-                  ? `$.credentialSubject.${field.path}`
-                  : field.path,
-              ],
-            };
-            if (field.filter) {
-              fieldData.filter = field.filter;
-            }
-            return fieldData;
-          }),
+        fields: [],
       },
     };
 
-    if (watchLimitDisclosure) {
-      updatedJson.constraints.limit_disclosure = "required";
-    }
-
-    // Add type field if typeCheck is set
+    // Add type field first if typeCheck is set
     if (watchTypeCheck) {
       updatedJson.constraints.fields.push({
         path: [watchTypeCheck],
@@ -73,14 +55,32 @@ const JsonForm = () => {
       });
     }
 
+   
+    // Add other fields
+    updatedJson.constraints.fields.push(
+      ...watchFields
+        .filter((field) => !field.isHidden && field.path !== "$.type")
+        .map((field) => {
+          const fieldData = {
+            path: [
+              field.hasPrefix
+                ? `$.credentialSubject.${field.path}`
+                : field.path,
+            ],
+          };
+          if (field.filter) {
+            fieldData.filter = field.filter;
+          }
+          return fieldData;
+        })
+    );
+
+    if (watchLimitDisclosure) {
+      updatedJson.constraints.limit_disclosure = "required";
+    }
+
     setValue("presentationDefinition", JSON.stringify(updatedJson, null, 2));
-  }, [
-    watchFields,
-    watchLimitDisclosure,
-    watchTypeCheck,
-    watchTypeFilter,
-    setValue,
-  ]);
+  }, [watchFields, watchLimitDisclosure, watchTypeCheck, watchTypeFilter, setValue]);
 
   useEffect(() => {
     updateJsonFromFields();
@@ -101,33 +101,18 @@ const JsonForm = () => {
     );
 
     if (!hasTypeField) {
-      throw new Error(
-        "Presentation Definition must contain a field with path '$.type'"
-      );
+      throw new Error("Presentation Definition must contain a field with path '$.type'");
     }
   };
+
+  
 
   const handleModalClose = () => {
     try {
       const parsedJson = JSON.parse(watchPresentationDefinition);
 
-      const updatedFields = parsedJson.constraints.fields
-        .filter((field) => field.path[0] !== "$.type")
-        .map((field) => {
-          const path = field.path[0];
-          const hasPrefix = path.startsWith("$.credentialSubject.");
-          return {
-            path: stripCredentialSubject(path),
-            hasPrefix,
-            isHidden: false,
-            filter: field.filter,
-          };
-        });
-
-      // Update typeCheck and typeFilter separately
-      const typeField = parsedJson.constraints.fields.find(
-        (field) => field.path[0] === "$.type"
-      );
+      // Extract type field
+      const typeField = parsedJson.constraints.fields.find((field) => field.path[0] === "$.type");
       if (typeField) {
         setValue("typeCheck", "$.type");
         setValue("typeFilter", typeField.filter || null);
@@ -135,6 +120,34 @@ const JsonForm = () => {
         setValue("typeCheck", "");
         setValue("typeFilter", null);
       }
+
+      // Process other fields
+      const updatedFields = watchFields.map(existingField => {
+        const matchingField = parsedJson.constraints.fields.find(
+          f => stripCredentialSubject(f.path[0]) === existingField.path
+        );
+        if (matchingField) {
+          return {
+            ...existingField,
+            filter: matchingField.filter,
+            hasPrefix: matchingField.path[0].startsWith("$.credentialSubject."),
+          };
+        }
+        return { ...existingField, isHidden: true };
+      });
+      
+      // Add new fields from the modal that weren't in the existing state
+      parsedJson.constraints.fields.forEach(field => {
+        if (field.path[0] !== "$.type" && !updatedFields.some(f => f.path === stripCredentialSubject(field.path[0]))) {
+          updatedFields.push({
+            path: stripCredentialSubject(field.path[0]),
+            hasPrefix: field.path[0].startsWith("$.credentialSubject."),
+            isHidden: false,
+            filter: field.filter,
+          });
+        }
+      });
+
 
       setValue("fields", updatedFields);
 
@@ -146,10 +159,10 @@ const JsonForm = () => {
       setError(null);
       validatePresentationDefinition(parsedJson);
 
-      setIsModalOpen(false);
+      setOpenEditPresentationDefinitionModal(false);
     } catch (error) {
       setError(error.message);
-      setIsModalOpen(false);
+      setOpenEditPresentationDefinitionModal(false);
     }
   };
 
@@ -258,7 +271,7 @@ const JsonForm = () => {
           type="button"
           onClick={() => {
             updateJsonFromFields();
-            setIsModalOpen(true);
+            setOpenEditPresentationDefinitionModal(true);
           }}
           style={{ padding: "8px 16px", marginRight: "16px" }}
         >
@@ -274,7 +287,7 @@ const JsonForm = () => {
         )}
       </form>
 
-      {isModalOpen && (
+      {openEditPresentationDefinitionModal && (
         <div
           style={{
             position: "fixed",
@@ -310,7 +323,7 @@ const JsonForm = () => {
             )}
             <div>
               <button
-                onClick={() => setIsModalOpen(false)}
+                onClick={() => setOpenEditPresentationDefinitionModal(false)}
                 style={{ marginRight: "10px" }}
               >
                 Cancel
