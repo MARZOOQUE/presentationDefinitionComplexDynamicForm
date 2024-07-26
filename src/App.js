@@ -107,16 +107,26 @@ const JsonForm = () => {
       const parsedJson = JSON.parse(watchPresentationDefinition);
 
       // Extract type field
-      const typeField = parsedJson.constraints.fields.find((field) => field.path.includes("$.type"));
-      if (typeField) {
-        setValue("typeCheck", typeField.path.join(', '));
-        setValue("typeFilter", typeField.filter.contains.const);
+      const typeField = parsedJson.constraints.fields.find((field) =>
+        field.path.includes("$.type")
+      );
 
+      if (typeField) {
+        setValue("typeCheck", typeField.path.join(", "));
+  
+        if (
+          typeField.filter &&
+          typeField.filter.contains &&
+          typeField.filter.contains.const
+        ) {
+          setValue("typeFilter", typeField.filter.contains.const);
+        } else {
+          setValue("typeFilter", "");
+        }
       } else {
         setValue("typeCheck", "");
-        setValue("typeFilter", null);
+        setValue("typeFilter", "");
       }
-
       // Process fields
       const updatedFields = watchFields.map(existingField => {
         const matchingField = parsedJson.constraints.fields.find(
