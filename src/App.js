@@ -158,7 +158,7 @@ const JsonForm = () => {
   };
 
   const handleAddField = () => {
-    append({ path: "", hasPrefix: false, isHidden: false });
+    append({ path: "", hasPrefix: true, isHidden: false });
   };
 
   const onSubmit = (data) => {
