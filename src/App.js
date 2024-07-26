@@ -50,23 +50,20 @@ const JsonForm = () => {
     // Add type field first if typeCheck is set
     if (watchTypeCheck) {
       updatedJson.constraints.fields.push({
-        path: [watchTypeCheck],
+        path: watchTypeCheck.split(',').map(p => p.trim()),
         ...(watchTypeFilter && { filter: watchTypeFilter }),
       });
     }
 
-   
     // Add other fields
     updatedJson.constraints.fields.push(
       ...watchFields
-        .filter((field) => !field.isHidden && field.path !== "$.type")
+        .filter((field) => !field.isHidden && !field.path.includes("$.type"))
         .map((field) => {
           const fieldData = {
-            path: [
-              field.hasPrefix
-                ? `$.credentialSubject.${field.path}`
-                : field.path,
-            ],
+            path: field.path.split(',').map(p => 
+              field.hasPrefix ? `$.credentialSubject.${p.trim()}` : p.trim()
+            ),
           };
           if (field.filter) {
             fieldData.filter = field.filter;
@@ -91,63 +88,59 @@ const JsonForm = () => {
     setError(null);
   };
 
-  const validatePresentationDefinition = (parsedJson) => {
-    if (!parsedJson.constraints || !parsedJson.constraints.fields) {
-      throw new Error("Invalid JSON structure: missing constraints.fields");
-    }
 
-    const hasTypeField = parsedJson.constraints.fields.some(
-      (field) => field.path && field.path.includes("$.type")
-    );
-
-    if (!hasTypeField) {
-      throw new Error("Presentation Definition must contain a field with path '$.type'");
-    }
-  };
-
-  
 
   const handleModalClose = () => {
     try {
       const parsedJson = JSON.parse(watchPresentationDefinition);
 
       // Extract type field
-      const typeField = parsedJson.constraints.fields.find((field) => field.path[0] === "$.type");
+      const typeField = parsedJson.constraints.fields.find((field) => field.path.includes("$.type"));
       if (typeField) {
-        setValue("typeCheck", "$.type");
+        setValue("typeCheck", typeField.path.join(', '));
         setValue("typeFilter", typeField.filter || null);
       } else {
         setValue("typeCheck", "");
         setValue("typeFilter", null);
       }
 
-      // Process other fields
+      // Process fields
       const updatedFields = watchFields.map(existingField => {
         const matchingField = parsedJson.constraints.fields.find(
-          f => stripCredentialSubject(f.path[0]) === existingField.path
+          f => f.path.some(p => stripCredentialSubject(p) === existingField.path)
         );
+
         if (matchingField) {
           return {
             ...existingField,
             filter: matchingField.filter,
-            hasPrefix: matchingField.path[0].startsWith("$.credentialSubject."),
+            hasPrefix: matchingField.path.some(p => p.startsWith("$.credentialSubject.")),
+            isHidden: existingField.isHidden, // Preserve the hidden state
           };
+        } else if (existingField.isHidden) {
+          // Keep hidden fields even if they're not in the JSON
+          return existingField;
+        } else {
+          // Field is not in JSON and not hidden, so we'll remove it
+          return null;
         }
-        return { ...existingField, isHidden: true };
-      });
-      
-      // Add new fields from the modal that weren't in the existing state
-      parsedJson.constraints.fields.forEach(field => {
-        if (field.path[0] !== "$.type" && !updatedFields.some(f => f.path === stripCredentialSubject(field.path[0]))) {
-          updatedFields.push({
-            path: stripCredentialSubject(field.path[0]),
-            hasPrefix: field.path[0].startsWith("$.credentialSubject."),
-            isHidden: false,
-            filter: field.filter,
-          });
-        }
-      });
+      }).filter(field => field !== null);
 
+      // Add new fields from JSON that weren't in the existing fields
+      parsedJson.constraints.fields.forEach(field => {
+        if (!field.path.includes("$.type")) {
+          const path = field.path.map(stripCredentialSubject).join(', ');
+          const existingField = updatedFields.find(f => f.path === path);
+          if (!existingField) {
+            updatedFields.push({
+              path,
+              hasPrefix: field.path.some(p => p.startsWith("$.credentialSubject.")),
+              isHidden: false,
+              filter: field.filter,
+            });
+          }
+        }
+      });
 
       setValue("fields", updatedFields);
 
@@ -156,13 +149,11 @@ const JsonForm = () => {
         parsedJson.constraints.limit_disclosure === "required";
       setValue("limitDisclosure", hasLimitDisclosure);
 
-      setError(null);
-      validatePresentationDefinition(parsedJson);
+     
 
       setOpenEditPresentationDefinitionModal(false);
     } catch (error) {
-      setError(error.message);
-      setOpenEditPresentationDefinitionModal(false);
+     
     }
   };
 
@@ -201,7 +192,7 @@ const JsonForm = () => {
 
         <div style={{ marginBottom: "16px" }}>
           <label>
-            Type Check Path:
+            Type Check Path(s):
             <Controller
               name="typeCheck"
               control={control}
@@ -209,7 +200,8 @@ const JsonForm = () => {
                 <input
                   {...field}
                   type="text"
-                  style={{ marginLeft: "8px", padding: "4px" }}
+                  placeholder="e.g. $.type, $.credentialSubject.type"
+                  style={{ marginLeft: "8px", padding: "4px", width: "300px" }}
                 />
               )}
             />
@@ -245,6 +237,7 @@ const JsonForm = () => {
                   type="text"
                   value={value}
                   onChange={onChange}
+                  placeholder="e.g. name, address.street, phone"
                   style={{ marginRight: "8px", padding: "4px", flexGrow: 1 }}
                 />
               )}
