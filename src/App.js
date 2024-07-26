@@ -51,9 +51,21 @@ const JsonForm = () => {
     if (watchTypeCheck) {
       updatedJson.constraints.fields.push({
         path: watchTypeCheck.split(',').map(p => p.trim()),
-        ...(watchTypeFilter && { filter: watchTypeFilter }),
+        ...(watchTypeFilter && { filter: {
+          type: "array",
+          contains: { const: watchTypeFilter }
+        }}),
       });
+    } else {
+      updatedJson.constraints.fields.push({
+        path: ["$.type"],
+        filter: {
+          type: "array",
+          contains: { const: watchTypeFilter }
+        }
+      })
     }
+
 
     // Add other fields
     updatedJson.constraints.fields.push(
@@ -98,7 +110,8 @@ const JsonForm = () => {
       const typeField = parsedJson.constraints.fields.find((field) => field.path.includes("$.type"));
       if (typeField) {
         setValue("typeCheck", typeField.path.join(', '));
-        setValue("typeFilter", typeField.filter || null);
+        setValue("typeFilter", typeField.filter.contains.const);
+
       } else {
         setValue("typeCheck", "");
         setValue("typeFilter", null);
@@ -194,7 +207,7 @@ const JsonForm = () => {
           <label>
             Type Check Path(s):
             <Controller
-              name="typeCheck"
+              name="typeFilter"
               control={control}
               render={({ field }) => (
                 <input
