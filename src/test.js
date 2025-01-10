@@ -12,9 +12,10 @@ const JsonForm = () => {
     defaultValues: {
       fields: [],
       limitDisclosure: false,
-      credentialFormat: "sdjwt",
+      credentialFormat: true,
       typeCheck: "",
       typeFilter: null,
+      mdocPrefix: "",
       presentationDefinition: JSON.stringify(
         {
           constraints: {
@@ -38,6 +39,8 @@ const JsonForm = () => {
   const watchTypeFilter = watch("typeFilter");
   const watchCredentialFormat = watch("credentialFormat");
   const watchMdocPrefix = watch("mdocPrefix");
+
+
 
   const updateJsonFromFields = React.useCallback(() => {
     const updatedJson = {
@@ -111,10 +114,10 @@ const JsonForm = () => {
                     ? `$['${watchMdocPrefix}']['${p.trim()}']`
                     : p.trim()
                   : field.hasPrefix
-                  ? watchCredentialFormat === "jwt"
-                    ? `$.credentialSubject.${p.trim()}`
-                    : `$.${p.trim()}`
-                  : p.trim()
+                    ? watchCredentialFormat === "jwt"
+                      ? `$.credentialSubject.${p.trim()}`
+                      : `$.${p.trim()}`
+                    : p.trim()
               ),
           };
 
@@ -142,22 +145,19 @@ const JsonForm = () => {
     updateJsonFromFields();
   }, [updateJsonFromFields]);
 
-  const handlePresentationDefinitionChange = (e) => {
-    const newValue = e.target.value;
-    setValue("presentationDefinition", newValue);
-    setError(null);
+  const handlePresentationDefinitionChange = (value) => {
+    setValue("presentationDefinition", value, {
+      shouldDirty: true,
+    });
 
     try {
-      const parsedJson = JSON.parse(newValue);
+      const parsedJson = JSON.parse(value);
 
-      // Extract type field
       const typeField = parsedJson.constraints.fields.find(
         (field) => field.path.includes("$.type") || field.path.includes("$.vct")
       );
-
       if (typeField) {
         setValue("typeCheck", typeField.path.join(", "));
-
         if (
           typeField.filter &&
           typeField.filter.contains &&
@@ -191,9 +191,19 @@ const JsonForm = () => {
     return firstArrayValue;
   };
 
-  const handleModalClose = () => {
+  const handleModalClose = (
+    presentationDefinitionValue,
+    setValue,
+    watchFields,
+    error,
+    setOpenEditPresentationDefinitionModal,
+    setOpenSnackBar,
+    setIsValidJson,
+    setError,
+    watchCredentialFormat
+  ) => {
     try {
-      const parsedJson = JSON.parse(watchPresentationDefinition);
+      const parsedJson = JSON.parse(presentationDefinitionValue);
       setValue("mdocPrefix", getPrefixForMdoc(parsedJson.constraints));
       const mdocPrefixValue = getPrefixForMdoc(parsedJson.constraints);
 
@@ -201,10 +211,8 @@ const JsonForm = () => {
       const typeField = parsedJson.constraints.fields.find(
         (field) => field.path.includes("$.type") || field.path.includes("$.vct")
       );
-
       if (typeField) {
         setValue("typeCheck", typeField.path.join(", "));
-
         if (
           typeField.filter &&
           typeField.filter.contains &&
@@ -241,7 +249,6 @@ const JsonForm = () => {
         }
       };
 
-      // Process fields
       const updatedFields = watchFields
         .map((existingField) => {
           const matchingField = parsedJson.constraints.fields.find((f) =>
@@ -274,7 +281,7 @@ const JsonForm = () => {
         })
         .filter((field) => field !== null);
 
-      // Add new fields from JSON that weren't in the existing fields
+      // Add new fields from the modal that weren't in the existing state
       parsedJson.constraints.fields.forEach((field) => {
         if (
           (field.path[0] !== "$.type" || field.path[0] !== "$.vct") &&
@@ -296,7 +303,7 @@ const JsonForm = () => {
         }
       });
 
-      // // Add new fields from JSON that weren't in the existing fields
+      // Add new fields from JSON that weren't in the existing fields
       parsedJson.constraints.fields.forEach((field) => {
         if (!field.path.includes("$.type")) {
           const path = field.path.map(stripePath).join(", ");
@@ -323,9 +330,25 @@ const JsonForm = () => {
         parsedJson.constraints &&
         parsedJson.constraints.limit_disclosure === "required";
       setValue("limitDisclosure", hasLimitDisclosure);
+    } catch (error) {
+      // Error handling remains the same
+    }
 
-      setOpenEditPresentationDefinitionModal(false);
-    } catch (error) {}
+    if (error !== "") {
+      if (error === "Array does not contain required item. at line number 3") {
+        setError(
+          "Presentation Definition must contain a field with path '$.type'"
+        );
+        setOpenSnackBar(true);
+        setIsValidJson(false);
+      } else {
+        setOpenSnackBar(true);
+        setIsValidJson(false);
+      }
+    } else {
+      setIsValidJson(true);
+    }
+    setOpenEditPresentationDefinitionModal(false);
   };
 
   const handleAddField = () => {
